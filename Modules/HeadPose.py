@@ -2,11 +2,11 @@
 # __author__ = 3van0
 # 2020-8-16
 
-import cv2
+from cv2 import cv2
 import numpy as np
 import dlib
 import math
-from stabilizer import Stabilizer
+from Modules.Stabilizer import Stabilizer
 
 
 
@@ -18,7 +18,8 @@ class HeadPose:
         state_num=2,
         measure_num=1,
         cov_process=0.1,
-        cov_measure=0.1) for _ in range(6)]
+        cov_measure=1) for _ in range(6)]
+    im = None
 
     def __init__(self, predictor, cap, useStabilizer = True):
         self.predictor = predictor
@@ -73,8 +74,10 @@ class HeadPose:
             return -1, None
         largest_index = self._largest_face(dets)
         face_rectangle = dets[largest_index]
-
+        self.currentFace = face_rectangle
         landmark_shape = self.predictor(img, face_rectangle)
+        
+
 
         return self.get_image_points_from_landmark_shape(landmark_shape)
 
@@ -156,19 +159,20 @@ class HeadPose:
         if (self.cap.isOpened()):
             
             # Read Image
-            ret, im = self.cap.read()
+            ret, self.im = self.cap.read()
             if ret != True:
                 # print('read frame failed')
-                return False, None, None
-            size = im.shape
+                return False, None, None, None
+            size = self.im.shape
             
             if size[0] > 10000:
                 h = size[0] / 3
                 w = size[1] / 3
-                im = cv2.resize(im, (int(w), int(h)), interpolation=cv2.INTER_CUBIC)
-                size = im.shape
+                self.im = cv2.resize(self.im, (int(w), int(h)), interpolation=cv2.INTER_CUBIC)
+                size = self.im.shape
          
-            ret, image_points = self.get_image_points(im)
+            ret, image_points = self.get_image_points(self.im)
+            self.currentPoints = image_points
             if ret != 0:
                 # print('get_image_points failed')
                 return False, None, None, None
