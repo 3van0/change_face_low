@@ -4,6 +4,11 @@ from Modules.Stabilizer import Stabilizer
 import dlib
 import numpy as np
 
+box_stabilizers = [Stabilizer(
+    state_num=2,
+    measure_num=1,
+    cov_process=0.1,
+    cov_measure=0.1) for _ in range(8)]
 
 if __name__ == '__main__':
     cap = cv2.VideoCapture(0)
@@ -15,19 +20,34 @@ if __name__ == '__main__':
         if ret:
             im = hp.im
             points = hp.currentPoints.astype(np.int)
-            area = hp.currentFace
-            left, top, right, bottom = area.left(), area.top(), area.right(), area.bottom()
-            # print(rotation_vector)
-            R, _ = cv2.Rodrigues(rotation_vector)
-            # print(R)
-            rot_rect = np.dot(R, np.array([[left, left, right, right],[top, bottom, top, bottom],[0,0,0,0]]))
-            rot_rect = np.abs(rot_rect.astype(np.int))
+            all_marks = hp.current_landmark.parts()
+            #all_marks = np.array(all_marks)
+            all_points = np.empty((0,2), dtype="int")
 
-            rot_rect = np.delete(rot_rect, 2, axis=0).T
+            for mark in all_marks:
+                #print(mark)
+                all_points = np.append(all_points, [[mark.x, mark.y]], axis=0)
+            #print(all_points)
 
-            print(rot_rect)
 
-            cv2.polylines(im, [rot_rect], True, (255,0,0))
+
+            rect = cv2.minAreaRect(all_points)
+            box = cv2.boxPoints(rect)
+            box = np.int0(box)
+            print("box",box)
+            
+            steady_box = []
+            box = box.flatten()
+            for i in range(8):
+                stb = box_stabilizers[i]
+                stb.update([box[i]])
+                steady_box.append(stb.state[0])
+            
+            steady_box = np.int0(np.reshape(steady_box, (4,2)))
+            print("steady:",steady_box)
+            
+            cv2.drawContours(im,[steady_box], 0, (0, 0, 255), 3)
+            
 
             
            # cv2.rectangle(im, (d_left, d_top), (d_right, d_bottom), (255, 0, 0), -1)

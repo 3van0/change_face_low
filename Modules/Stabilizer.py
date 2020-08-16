@@ -1,5 +1,5 @@
 """
-Using Kalman Filter as a point stabilizer to stabiliz a 2D point.
+Using Kalman Filter as a point stabilizer to stabilize a 2D point.
 """
 import numpy as np
 

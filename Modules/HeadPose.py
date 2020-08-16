@@ -76,7 +76,7 @@ class HeadPose:
         face_rectangle = dets[largest_index]
         self.currentFace = face_rectangle
         landmark_shape = self.predictor(img, face_rectangle)
-        
+        self.current_landmark = landmark_shape
 
 
         return self.get_image_points_from_landmark_shape(landmark_shape)
