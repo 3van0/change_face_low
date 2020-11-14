@@ -1,4 +1,4 @@
-#! usr/bin/env python3
+#!usr/bin/env python3
 # __author__ = 3van0
 # 2020-8-16
 
@@ -8,84 +8,201 @@ import dlib
 import math
 from Modules.Stabilizer import Stabilizer
 
-
-
 class HeadPose:
 
     detector = dlib.get_frontal_face_detector()
-    POINTS_NUM_LANDMARK = 68
-    pose_stabilizers = [Stabilizer(
+    posStabilizers = [Stabilizer(
         state_num=2,
         measure_num=1,
         cov_process=0.1,
         cov_measure=1) for _ in range(6)]
-    im = None
+    boxStabilizers = [Stabilizer(
+    state_num=2,
+    measure_num=1,
+    cov_process=0.05,
+    cov_measure=0.05) for _ in range(8)]
 
-    def __init__(self, predictor, cap, useStabilizer = True):
+    def __init__(self, predictor, cap, useStabilizer = True, pointsNum = 68):
         self.predictor = predictor
         self.cap = cap
         self.useStabilizer = useStabilizer
-
-
-    # fetch biggest face
-    def _largest_face(self, dets):
-        if len(dets) == 1:
-            return 0
-
-        face_areas = [ (det.right()-det.left())*(det.bottom()-det.top()) for det in dets]
-
-        largest_area = face_areas[0]
-        largest_index = 0
-        for index in range(1, len(dets)):
-            if face_areas[index] > largest_area :
-                largest_index = index
-                largest_area = face_areas[index]
-
-        # print("largest_face index is {} in {} faces".format(largest_index, len(dets)))
-
-        return largest_index
+        self.POINTS_NUM_LANDMARK = pointsNum
+        self.im = None
 
     # fetch 6 feature points from all points
-    def get_image_points_from_landmark_shape(self, landmark_shape):
-        if landmark_shape.num_parts != self.POINTS_NUM_LANDMARK:
-            # print("ERROR:landmark_shape.num_parts-{}".format(landmark_shape.num_parts))
+    def getImagePointsFromLandmarkShape(self, landmarkShape):
+        if landmarkShape.num_parts != self.POINTS_NUM_LANDMARK:
+            # print("ERROR:landmarkShape.num_parts-{}".format(landmarkShape.num_parts))
             return -1, None
         
         #2D image points. If you change the image, you need to change vector
-        image_points = np.array([
-                                    (landmark_shape.part(30).x, landmark_shape.part(30).y),     # Nose tip
-                                    (landmark_shape.part(8).x, landmark_shape.part(8).y),     # Chin
-                                    (landmark_shape.part(36).x, landmark_shape.part(36).y),     # Left eye left corner
-                                    (landmark_shape.part(45).x, landmark_shape.part(45).y),     # Right eye right corne
-                                    (landmark_shape.part(48).x, landmark_shape.part(48).y),     # Left Mouth corner
-                                    (landmark_shape.part(54).x, landmark_shape.part(54).y)      # Right mouth corner
+        imagePoints = np.array([
+                                    (landmarkShape.part(30).x, landmarkShape.part(30).y),     # Nose tip
+                                    (landmarkShape.part(8).x, landmarkShape.part(8).y),     # Chin
+                                    (landmarkShape.part(36).x, landmarkShape.part(36).y),     # Left eye left corner
+                                    (landmarkShape.part(45).x, landmarkShape.part(45).y),     # Right eye right corne
+                                    (landmarkShape.part(48).x, landmarkShape.part(48).y),     # Left Mouth corner
+                                    (landmarkShape.part(54).x, landmarkShape.part(54).y)      # Right mouth corner
                                 ], dtype="double")
 
-        return 0, image_points
-    
+        return 0, imagePoints
+
     # fetch points
-    def get_image_points(self, img):
-                                
-        #gray = cv2.cvtColor( img, cv2.COLOR_BGR2GRAY )  # 图片调整为灰色
+    def getImagePoints(self, img):
         dets = self.detector( img, 0 )
 
         if 0 == len( dets ):
             # print( "ERROR: found no face" )
             return -1, None
-        largest_index = self._largest_face(dets)
-        face_rectangle = dets[largest_index]
-        self.currentFace = face_rectangle
-        landmark_shape = self.predictor(img, face_rectangle)
-        self.current_landmark = landmark_shape
+        largestIndex = self._largestFace(dets)
+        faceRectangle = dets[largestIndex]
+        landmarkShape = self.predictor(img, faceRectangle)
+        self.currentLandmark = landmarkShape
 
+        return self.getImagePointsFromLandmarkShape(landmarkShape)
 
-        return self.get_image_points_from_landmark_shape(landmark_shape)
+    def update(self):
+        # read from camera and return head pose.
+        self.isUpdated = False
+        if (self.cap.isOpened()):
+            
+            # Read Image
+            ret, self.im = self.cap.read()
+            if ret != True:
+                # print('read frame failed')
+                return False, None, None, None
+            size = self.im.shape
+            
+            if size[0] > 10000:
+                h = size[0] / 3
+                w = size[1] / 3
+                self.im = cv2.resize(self.im, (int(w), int(h)), interpolation=cv2.INTER_CUBIC)
+                size = self.im.shape
+         
+            ret, imagePoints = self.getImagePoints(self.im)
+            self.currentPoints = imagePoints
+            if ret != 0:
+                # print('getImagePoints failed')
+                return False, None, None, None
+            
+            ret, rotationVector, translationVector, cameraMatrix, dist_coeffs = self.getPoseEstimation(size, imagePoints)
+            
+            if ret != True:
+                # print('getPoseEstimation failed')
+                return False, None, None, None
+            
+            if self.useStabilizer:
+                # Stabilize pose
+                pose = (rotationVector, translationVector)
+                steady_pose = []
+                pose_np = np.array(pose).flatten()
+                for value, ps_stb in zip(pose_np, self.posStabilizers):
+                    ps_stb.update([value])
+                    steady_pose.append(ps_stb.state[0])
+                steady_pose = np.reshape(steady_pose, (-1, 3))
+                rotationVector = steady_pose[0]
+                translationVector = steady_pose[1]
+            
+            ret, pitch, yaw, roll = self.getEulerAngle(rotationVector)
+            if ret != 0:
+                # print('getEulerAngle failed')
+                return -1, None, None, None
+            
+            self.isUpdated = True
+            self.currentData = (rotationVector, translationVector, [pitch, yaw, roll])
+            return True, rotationVector, translationVector, [pitch, yaw, roll]
 
+    def getCurrentImage(self):
+        if self.im is not None:
+            return True, self.im
+        else:
+            return False, None
+    
+    def getFaceBox(self, expand=False):
+        if (self.isUpdated):
+            rotation_vector, translation_vector, eulerAngle = self.currentData
+            im = self.im
+            points = self.currentPoints.astype(np.int)
+            all_marks = self.currentLandmark.parts()
+            #all_marks = np.array(all_marks)
+            all_points = np.empty((0,2), dtype="int")
 
+            for mark in all_marks:
+                #print(mark)
+                all_points = np.append(all_points, [[mark.x, mark.y]], axis=0)
+
+            rect = cv2.minAreaRect(all_points)
+            box = cv2.boxPoints(rect)
+            box = np.int0(box)
+            #print("box: ",box)
+            print("deg: ",rect[2])
+            deg = rect[2]
+            if(rect[2]<-45):
+                box_tmp = np.empty((4,2), dtype="int")
+                box_tmp[0]=box[1]
+                box_tmp[1]=box[2]
+                box_tmp[2]=box[3]
+                box_tmp[3]=box[0]
+                box = box_tmp
+                print(box)
+            
+            if(rect[2]<-45):
+                height = rect[1][0]
+                width = rect[1][1]
+            else:
+                width = rect[1][0]
+                height = rect[1][1]
+
+            if(expand):
+                height = height*3/2
+                print(height, width)
+
+                exp_point1, exp_point2 = self.expandWidth(box[0], box[3], 20, deg)
+                exp_point3, exp_point4 = self.expandHeight(exp_point1, exp_point2, height, deg)
+                box_tmp = np.empty((4,2), int)
+                box_tmp[0] = exp_point1
+                box_tmp[1:3] = [exp_point3, exp_point4]
+                box_tmp[3] = exp_point2
+                box = box_tmp
+
+            
+            steady_box = []
+            box = box.flatten()
+            
+            for i in range(8):
+                stb = self.boxStabilizers[i]
+                stb.update([box[i]])
+                steady_box.append(stb.state[0])
+            
+            steady_box = np.int0(np.reshape(steady_box, (4,2)))
+            return True, steady_box
+        else:
+            return False, None
+    
+    @staticmethod
+    # fetch biggest face
+    def _largestFace(dets):
+        if len(dets) == 1:
+            return 0
+
+        faceAreas = [ (det.right()-det.left())*(det.bottom()-det.top()) for det in dets]
+
+        largestArea = faceAreas[0]
+        largestIndex = 0
+        for index in range(1, len(dets)):
+            if faceAreas[index] > largestArea :
+                largestIndex = index
+                largestArea = faceAreas[index]
+
+        # print("largest_face index is {} in {} faces".format(largestIndex, len(dets)))
+
+        return largestIndex
+
+    @staticmethod
     # calculate rotation vector and translation vector
-    def get_pose_estimation(self, img_size, image_points ):
+    def getPoseEstimation(imgSize, imagePoints ):
         # 3D model points.
-        model_points = np.array([
+        modelPoints = np.array([
                                     (0.0, 0.0, 0.0),             # Nose tip
                                     (0.0, -330.0, -65.0),        # Chin
                                     (-225.0, 170.0, -135.0),     # Left eye left corner
@@ -96,31 +213,31 @@ class HeadPose:
                                 ])
          
         # Camera internals
-         
-        focal_length = img_size[1]
-        center = (img_size[1]/2, img_size[0]/2)
-        camera_matrix = np.array(
-                                 [[focal_length, 0, center[0]],
-                                 [0, focal_length, center[1]],
+        focalLength = imgSize[1]
+        center = (imgSize[1]/2, imgSize[0]/2)
+        cameraMatrix = np.array(
+                                 [[focalLength, 0, center[0]],
+                                 [0, focalLength, center[1]],
                                  [0, 0, 1]], dtype = "double"
                                  )
          
          
         dist_coeffs = np.zeros((4,1)) # Assuming no lens distortion
-        (success, rotation_vector, translation_vector) = cv2.solvePnP(model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE )
+        (success, rotationVector, translationVector) = cv2.solvePnP(modelPoints, imagePoints, cameraMatrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE )
      
-        return success, rotation_vector, translation_vector, camera_matrix, dist_coeffs
+        return success, rotationVector, translationVector, cameraMatrix, dist_coeffs
 
+    @staticmethod
     # transfer to Euler angle
-    def get_euler_angle(self, rotation_vector):
+    def getEulerAngle(rotationVector):
         # calculate rotation angles
-        theta = cv2.norm(rotation_vector, cv2.NORM_L2)
+        theta = cv2.norm(rotationVector, cv2.NORM_L2)
         
         # transformed to quaterniond
         w = math.cos(theta / 2)
-        x = math.sin(theta / 2)*rotation_vector[0] / theta
-        y = math.sin(theta / 2)*rotation_vector[1] / theta
-        z = math.sin(theta / 2)*rotation_vector[2] / theta
+        x = math.sin(theta / 2)*rotationVector[0] / theta
+        y = math.sin(theta / 2)*rotationVector[1] / theta
+        z = math.sin(theta / 2)*rotationVector[2] / theta
         
         ysqr = y * y
         # pitch (x-axis rotation)
@@ -144,72 +261,68 @@ class HeadPose:
         
         # print('pitch:{}, yaw:{}, roll:{}'.format(pitch, yaw, roll))
         
-        # 单位转换：将弧度转换为度
+        # convert to degree
         Y = int((pitch/math.pi)*180)
         X = int((yaw/math.pi)*180)
         Z = int((roll/math.pi)*180)
         
         return 0, Y, X, Z
 
+    @staticmethod
+    # expand box width
+    def expandWidth(point1, point2, diff, deg):
+        if(point1[1]==point2[1]):
+            return([int(point1[0] - diff), int(point1[1])], [int(point2[0] + diff), int(point2[1])])
+        elif(deg<-45):
+            point3 = [int(point1[0] + diff*math.sin(deg*math.pi/180)), int(point1[1] + diff*math.cos(deg*math.pi/180))]
+            point4 = [int(point2[0] - diff*math.sin(deg*math.pi/180)), int(point2[1] + diff*math.cos(deg*math.pi/180))]
+        else:
+            point3 = [int(point1[0] - diff*math.cos(deg*math.pi/180)), int(point1[1] - diff*math.sin(deg*math.pi/180))]
+            point4 = [int(point2[0] + diff*math.cos(deg*math.pi/180)), int(point2[1] - diff*math.sin(deg*math.pi/180))]
+        return(point3, point4)
 
-    def readHeadPose(self):
-        # require cap as input
-        # read from camera and return head pose.
-
-        if (self.cap.isOpened()):
-            
-            # Read Image
-            ret, self.im = self.cap.read()
-            if ret != True:
-                # print('read frame failed')
-                return False, None, None, None
-            size = self.im.shape
-            
-            if size[0] > 10000:
-                h = size[0] / 3
-                w = size[1] / 3
-                self.im = cv2.resize(self.im, (int(w), int(h)), interpolation=cv2.INTER_CUBIC)
-                size = self.im.shape
-         
-            ret, image_points = self.get_image_points(self.im)
-            self.currentPoints = image_points
-            if ret != 0:
-                # print('get_image_points failed')
-                return False, None, None, None
-            
-            ret, rotation_vector, translation_vector, camera_matrix, dist_coeffs = self.get_pose_estimation(size, image_points)
-            
-            if ret != True:
-                # print('get_pose_estimation failed')
-                return False, None, None, None
-            
-            if self.useStabilizer:
-                # Stabilize pose
-                pose = (rotation_vector, translation_vector)
-                steady_pose = []
-                pose_np = np.array(pose).flatten()
-                for value, ps_stb in zip(pose_np, self.pose_stabilizers):
-                    ps_stb.update([value])
-                    steady_pose.append(ps_stb.state[0])
-                steady_pose = np.reshape(steady_pose, (-1, 3))
-                rotation_vector = steady_pose[0]
-                translation_vector = steady_pose[1]
-            
-            ret, pitch, yaw, roll = self.get_euler_angle(rotation_vector)
-            if ret != 0:
-                # print('get_euler_angle failed')
-                return -1, None, None, None
-            
-            return True, rotation_vector, translation_vector, (pitch, yaw, roll)
-        
+    @staticmethod
+    # expand box height
+    def expandHeight(point1, point2, height, deg):
+        if(point1[1]==point2[1]):
+            return([int(point1[0]), int(point1[1]-height)], [int(point2[0]), int(point2[1]-height)])
+        elif(deg<-45):
+            point3 = [int(point1[0] + height*math.cos(deg*math.pi/180)), int(point1[1] + height*math.sin(deg*math.pi/180))]
+            point4 = [int(point2[0] + height*math.cos(deg*math.pi/180)), int(point2[1] + height*math.sin(deg*math.pi/180))]
+        else:
+            point3 = [int(point1[0] + height*math.sin(deg*math.pi/180)), int(point1[1] - height*math.cos(deg*math.pi/180))]
+            point4 = [int(point2[0] + height*math.sin(deg*math.pi/180)), int(point2[1] - height*math.cos(deg*math.pi/180))]
+        return(point3, point4)
+    
 if __name__ == '__main__':
-
     cap = cv2.VideoCapture(0)
-    # Introduce scalar stabilizers for pose.
     hp = HeadPose(dlib.shape_predictor("shape_predictor_68_face_landmarks.dat"), cap)
-    while True:
+    while (True):
         
-        ret, rotation_vector, translation_vector, euler_angle = hp.readHeadPose()
-    
-        print(translation_vector, euler_angle)
-    
+        img = hp.im
+     
+        ret, imagePoints = hp.getImagePoints(img)
+        ret, rotationVector, translationVector, eulerAngle = hp.readHeadPose()
+        ret, pitch, yaw, roll = hp.getEulerAngle(rotationVector)
+        eulerAngle_str = 'Y:{}, X:{}, Z:{}'.format(pitch, yaw, roll)
+        print(eulerAngle_str)
+        
+        # Project a 3D point (0, 0, 1000.0) onto the image plane.
+        # We use this to draw a line sticking out of the nose
+         
+        (nose_end_point2D, jacobian) = cv2.projectPoints(np.array([(0.0, 0.0, 1000.0)]), rotationVector, translationVector, cameraMatrix, dist_coeffs)
+         
+        for p in imagePoints:
+            cv2.circle(img, (int(p[0]), int(p[1])), 3, (0,0,255), -1)
+         
+         
+        p1 = ( int(imagePoints[0][0]), int(imagePoints[0][1]))
+        p2 = ( int(nose_end_point2D[0][0][0]), int(nose_end_point2D[0][0][1]))
+         
+        cv2.line(im, p1, p2, (255,0,0), 2)
+         
+        # Display image
+        #cv2.putText( im, str(rotationVector), (0, 100), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255), 1 )
+        cv2.putText( im, eulerAngle_str, (0, 120), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255), 1 )
+        cv2.imshow("Output", im)
+        cv2.waitKey(1)
