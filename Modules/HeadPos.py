@@ -8,7 +8,7 @@ import dlib
 import math
 from Modules.Stabilizer import Stabilizer
 
-class HeadPose:
+class HeadPos:
 
     detector = dlib.get_frontal_face_detector()
     posStabilizers = [Stabilizer(
@@ -144,7 +144,7 @@ class HeadPose:
                 box_tmp[2]=box[3]
                 box_tmp[3]=box[0]
                 box = box_tmp
-                print(box)
+                # print(box)
             
             if(rect[2]<-45):
                 height = rect[1][0]
@@ -155,7 +155,7 @@ class HeadPose:
 
             if(expand):
                 height = height*3/2
-                print(height, width)
+                # print(height, width)
 
                 exp_point1, exp_point2 = self.expandWidth(box[0], box[3], 20, deg)
                 exp_point3, exp_point4 = self.expandHeight(exp_point1, exp_point2, height, deg)
@@ -296,13 +296,13 @@ class HeadPose:
     
 if __name__ == '__main__':
     cap = cv2.VideoCapture(0)
-    hp = HeadPose(dlib.shape_predictor("shape_predictor_68_face_landmarks.dat"), cap)
+    hp = HeadPos(dlib.shape_predictor("shape_predictor_68_face_landmarks.dat"), cap)
     while (True):
         
         img = hp.im
      
         ret, imagePoints = hp.getImagePoints(img)
-        ret, rotationVector, translationVector, eulerAngle = hp.readHeadPose()
+        ret, rotationVector, translationVector, eulerAngle = hp.readHeadPos()
         ret, pitch, yaw, roll = hp.getEulerAngle(rotationVector)
         eulerAngle_str = 'Y:{}, X:{}, Z:{}'.format(pitch, yaw, roll)
         print(eulerAngle_str)

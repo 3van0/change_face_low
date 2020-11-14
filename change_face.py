@@ -1,5 +1,5 @@
 from cv2 import cv2
-from Modules.HeadPose import HeadPose
+from Modules.HeadPos import HeadPos
 from Modules.Stabilizer import Stabilizer
 import dlib
 import numpy as np
@@ -8,7 +8,7 @@ import math
 
 if __name__ == '__main__':
     cap = cv2.VideoCapture(0)
-    hp = HeadPose(dlib.shape_predictor(
+    hp = HeadPos(dlib.shape_predictor(
         "shape_predictor_68_face_landmarks.dat"), cap)
     while True:
             
@@ -16,8 +16,7 @@ if __name__ == '__main__':
             if ret != False:
                 _, im = hp.getCurrentImage()
                 _, steady_box = hp.getFaceBox()
-                print("steady:",steady_box)
-                print(type(im))
+                # print("steady:",steady_box)
                 cv2.drawContours(im, [steady_box], 0, (0, 0, 255), 3)
             
             
