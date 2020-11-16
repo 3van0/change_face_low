@@ -2,7 +2,41 @@ from cv2 import cv2
 import numpy as np
 import math
 
-# def superpose(img, box, target):
+
+def superpose(im, box, img_target):
+
+    im_b, im_g, im_r = cv2.split(im)
+    im_alpha =  np.ones(im_b.shape, dtype=im_b.dtype)*255
+    im = cv2.merge((im_b, im_g, im_r, im_alpha))
+
+    deg = getBoxDegree(box)
+    newbox, box_width, box_height = getNewBox(box, 483, 494, deg)
+    img_target_rt = cv2.resize(img_target, (int(box_width), int(box_height)))
+    if deg < -45:
+        img_target_rt = rotateImg(img_target_rt, 90+deg)
+    else:
+        img_target_rt = rotateImg(img_target_rt, deg)
+    sp_target = img_target_rt.shape
+    tg_wd = sp_target[0]
+    tg_ht = sp_target[1]
+    _,_,_,mask = cv2.split(img_target_rt)
+    mask = 255 - mask
+    mask = cv2.normalize(mask, mask, 0, 1, cv2.NORM_MINMAX)
+    # cv2.imshow("mask",mask)
+    normbox = getSrcArea(im, newbox)
+    src_frame = im[normbox[1]:normbox[1]+tg_wd, normbox[0]:normbox[0]+tg_ht]
+    #frame_add = np.multiply(src_frame, mask) + img_target_rt
+    src_frame_b, src_frame_g, src_frame_r, src_frame_alpha = cv2.split(src_frame)
+    src_frame_b = src_frame_b * mask
+    src_frame_g = src_frame_g * mask
+    src_frame_r = src_frame_r * mask
+    src_frame_alpha = src_frame_alpha * mask
+    src_frame = cv2.merge((src_frame_b, src_frame_g, src_frame_r, src_frame_alpha))
+    frame_add = src_frame + img_target_rt
+    im[normbox[1]:normbox[1]+tg_wd, normbox[0]:normbox[0]+tg_ht] = frame_add
+
+    return im
+
 
 def getBoxDegree(box, origin_deg=None):
     if origin_deg is not None:
@@ -89,26 +123,18 @@ def expandFromBottom(box, width, height, deg):
 
 
 def rotateImg(image, angle):
-    # grab the dimensions of the image and then determine the
-    # center
     (h, w) = image.shape[:2]
     (cX, cY) = (w // 2, h // 2)
  
-    # grab the rotation matrix (applying the negative of the
-    # angle to rotate clockwise), then grab the sine and cosine
-    # (i.e., the rotation components of the matrix)
     M = cv2.getRotationMatrix2D((cX, cY), -angle, 1.0)
     cos = np.abs(M[0, 0])
     sin = np.abs(M[0, 1])
  
-    # compute the new bounding dimensions of the image
     nW = int((h * sin) + (w * cos))
     nH = int((h * cos) + (w * sin))
  
-    # adjust the rotation matrix to take into account translation
     M[0, 2] += (nW / 2) - cX
     M[1, 2] += (nH / 2) - cY
  
-    # perform the actual rotation and return the image
     return cv2.warpAffine(image, M, (nW, nH), borderValue=(255,255,255,0))
  
